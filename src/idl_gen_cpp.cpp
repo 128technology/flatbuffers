@@ -102,6 +102,12 @@ class CppGenerator : public BaseGenerator {
     code_ += "#define " + include_guard;
     code_ += "";
 
+    if (parser_.opts.ostream_enums) {
+      code_ += "#include <ostream>";
+      code_ += "";
+    }
+
+    code_ += "#include \"flatbuffers/flatbuffers_enums.h\"";
     code_ += "#include \"flatbuffers/flatbuffers.h\"";
     code_ += "";
 
@@ -260,6 +266,10 @@ class CppGenerator : public BaseGenerator {
 
     assert(cur_name_space_);
     SetNameSpace(nullptr);
+
+    if (!enum_decls_generated) {
+      GenEnumTraitSpecials();
+    }
 
     // Close the include guard.
     code_ += "#endif  // " + include_guard;
@@ -672,6 +682,12 @@ class CppGenerator : public BaseGenerator {
     code_ += "#include <cstdint>";
     code_ += "#include <cstddef>";
     code_ += "#include <type_traits>";
+    if (parser_.opts.ostream_enums) {
+      code_ += "#include <ostream>";
+    }
+    code_ += "";
+
+    code_ += "#include \"flatbuffers/flatbuffers_enums.h\"";
     code_ += "";
 
     assert(!cur_name_space_);
@@ -685,6 +701,8 @@ class CppGenerator : public BaseGenerator {
 
     assert(cur_name_space_);
     SetNameSpace(nullptr);
+
+    GenEnumTraitSpecials();
 
     // Close the include guard.
     code_ += "#endif  // " + include_guard;
@@ -726,6 +744,69 @@ class CppGenerator : public BaseGenerator {
         GenEnumUnionTrait(enum_def);
       }
     }
+  }
+
+  void GenEnumTraitSpecials() {
+    if (parser_.enums_.vec.empty() ||
+        !parser_.opts.scoped_enums) {
+      return;
+    }
+
+    assert(!cur_name_space_);
+
+    code_ += "";
+    code_ += "namespace flatbuffers {";
+    for (auto it = parser_.enums_.vec.begin(); it != parser_.enums_.vec.end();
+         ++it) {
+      const auto &enum_def = **it;
+
+      if (!enum_def.generated) {
+        // std::string fullname = enum_def.defined_namespace->GetFullyQualifiedName(enum_def.name);
+
+        code_.SetValue("ENUM_FULL", WrapInNameSpace(enum_def));
+        code_.SetValue("ENUM_NS", WrapInNameSpace(enum_def.defined_namespace, ""));
+        code_.SetValue("ENUM_NAME", enum_def.name);
+        code_.SetValue("ENUM_IS_UNION", enum_def.is_union ? "std::true_type" : "std::false_type");
+
+        code_ += "";
+        code_ += "template<> struct IsEnum<{{ENUM_FULL}}> : std::true_type {";
+        code_ += "  using isUnion = {{ENUM_IS_UNION}};";
+        code_ += "";
+        code_ += "  static const char *EnumName(const {{ENUM_FULL}} e, const char* u=\"<unknown>\") {";
+        code_ += "    return {{ENUM_NS}}EnumName{{ENUM_NAME}}(e, u);";
+        code_ += "  }";
+        code_ += "};";
+      }
+    }
+    code_ += "";
+    code_ += "}  // namespace flatbuffers";
+    code_ += "";
+    code_ += "";
+
+    if (parser_.opts.ostream_enums) {
+      GenEnumOstreams();
+    }
+  }
+
+  void GenEnumOstream(const EnumDef &enum_def) {
+    code_ += "inline std::ostream& operator<<(std::ostream& os, const \\";
+    code_ += enum_def.name + "& e) {";
+    code_ += "  os << flatbuffers::EnumName(e);";
+    code_ += "  return os;";
+    code_ += "}";
+    code_ += "";
+  }
+
+  void GenEnumOstreams() {
+    for (auto it = parser_.enums_.vec.begin(); it != parser_.enums_.vec.end();
+         ++it) {
+      const auto &enum_def = **it;
+      if (!enum_def.generated) {
+        SetNameSpace(enum_def.defined_namespace);
+        GenEnumOstream(enum_def);
+      }
+    }
+    SetNameSpace(nullptr);
   }
 
   void GenEnumUnionDecl(const EnumDef &enum_def) {

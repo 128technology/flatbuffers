@@ -77,6 +77,7 @@ std::string FlatCompiler::GetUsageString(const char* program_name) const {
       "                     also implies --no-prefix.\n"
       "  --separate-enums   Declare/define enums in a separate C/C++ header file,\n"
       "                     as 'filename_genum.h'.\n"
+      "  --ostream-enums    Define a std::ostream operator<<() for all enums.\n"
       "  --gen-includes     (deprecated), this is the default behavior.\n"
       "                     If the original behavior is required (no include\n"
       "                     statements) use --no-includes.\n"
@@ -171,6 +172,8 @@ int FlatCompiler::Compile(int argc, const char** argv) {
         opts.scoped_enums = true;
       } else if(arg == "--separate-enums") {
         opts.separate_enums = true;
+      } else if(arg == "--ostream-enums") {
+        opts.ostream_enums = true;
       } else if (arg == "--no-union-value-namespacing") {
         opts.union_value_namespacing = false;
       } else if(arg == "--gen-mutable") {
