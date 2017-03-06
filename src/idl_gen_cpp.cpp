@@ -28,6 +28,11 @@ static std::string GeneratedFileName(const std::string &path,
   return path + file_name + "_generated.h";
 }
 
+static std::string GeneratedEnumFileName(const std::string &path,
+                                         const std::string &file_name) {
+  return path + file_name + "_genum.h";
+}
+
 namespace cpp {
 class CppGenerator : public BaseGenerator {
  public:
@@ -36,7 +41,7 @@ class CppGenerator : public BaseGenerator {
       : BaseGenerator(parser, path, file_name, "", "::"),
         cur_name_space_(nullptr) {}
 
-  std::string GenIncludeGuard() const {
+  std::string GenIncludeGuard(const char* suffix="") const {
     // Generate include guard.
     std::string guard = file_name_;
     // Remove any non-alpha-numeric characters that may appear in a filename.
@@ -53,6 +58,7 @@ class CppGenerator : public BaseGenerator {
          it != name_space->components.end(); ++it) {
       guard += *it + "_";
     }
+    guard += suffix;
     guard += "H_";
     std::transform(guard.begin(), guard.end(), guard.begin(), ::toupper);
     return guard;
@@ -83,6 +89,11 @@ class CppGenerator : public BaseGenerator {
   bool generate() {
     if (IsEverythingGenerated()) return true;
 
+    bool enum_decls_generated = false;
+    if (parser_.opts.separate_enums) {
+      enum_decls_generated = GenEnumHeaderFile();
+    }
+
     code_.Clear();
     code_ += "// " + std::string(FlatBuffersGeneratedWarning());
 
@@ -98,32 +109,23 @@ class CppGenerator : public BaseGenerator {
       GenIncludeDependencies();
     }
 
+    if (enum_decls_generated) {
+      code_ += "#include \"" + GeneratedEnumFileName(path_, file_name_) + "\"";
+      code_ += "";
+    }
+
     assert(!cur_name_space_);
 
     // Generate forward declarations for all structs/tables, since they may
     // have circular references.
-    for (auto it = parser_.structs_.vec.begin();
-         it != parser_.structs_.vec.end(); ++it) {
-      const auto &struct_def = **it;
-      if (!struct_def.generated) {
-        SetNameSpace(struct_def.defined_namespace);
-        code_ += "struct " + struct_def.name + ";";
-        if (parser_.opts.generate_object_based_api && !struct_def.fixed) {
-          code_ += "struct " + NativeName(struct_def.name) + ";";
-        }
-        code_ += "";
-      }
+    GenForwardDecls();
+
+    if (!enum_decls_generated) {
+      // Generate code for all the enum declarations.
+      GenEnums();
     }
 
-    // Generate code for all the enum declarations.
-    for (auto it = parser_.enums_.vec.begin(); it != parser_.enums_.vec.end();
-         ++it) {
-      const auto &enum_def = **it;
-      if (!enum_def.generated) {
-        SetNameSpace(enum_def.defined_namespace);
-        GenEnum(enum_def);
-      }
-    }
+    GenEnumUnionDecls();
 
     // Generate code for all structs, then all tables.
     for (auto it = parser_.structs_.vec.begin();
@@ -290,6 +292,24 @@ class CppGenerator : public BaseGenerator {
     std::string text;
     ::flatbuffers::GenComment(dc, &text, nullptr, prefix);
     code_ += text + "\\";
+  }
+
+  // Generate forward declarations for all structs/tables
+  void GenForwardDecls() {
+    // Generate forward declarations for all structs/tables, since they may
+    // have circular references.
+    for (auto it = parser_.structs_.vec.begin();
+         it != parser_.structs_.vec.end(); ++it) {
+      const auto &struct_def = **it;
+      if (!struct_def.generated) {
+        SetNameSpace(struct_def.defined_namespace);
+        code_ += "struct " + struct_def.name + ";";
+        if (parser_.opts.generate_object_based_api && !struct_def.fixed) {
+          code_ += "struct " + NativeName(struct_def.name) + ";";
+        }
+        code_ += "";
+      }
+    }
   }
 
   // Return a C++ type from the table in idl.h
@@ -641,8 +661,61 @@ class CppGenerator : public BaseGenerator {
         code_ += "";
       }
     }
+  }
 
-    if (parser_.opts.generate_object_based_api && enum_def.is_union) {
+  void GenEnums() {
+    // Generate code for all the enum declarations.
+    for (auto it = parser_.enums_.vec.begin(); it != parser_.enums_.vec.end();
+         ++it) {
+      const auto &enum_def = **it;
+      if (!enum_def.generated) {
+        SetNameSpace(enum_def.defined_namespace);
+        GenEnum(enum_def);
+      }
+    }
+  }
+
+  // generates a separate header file for enum declarations - returns
+  // true if it generated one, otherwise false if there were no enums
+  bool GenEnumHeaderFile() {
+    if (parser_.enums_.vec.empty()) {
+      return false;
+    }
+
+    code_.Clear();
+    code_ += "// " + std::string(FlatBuffersGeneratedWarning());
+
+    const auto include_guard = GenIncludeGuard("ENUM_");
+    code_ += "#ifndef " + include_guard;
+    code_ += "#define " + include_guard;
+    code_ += "";
+
+    code_ += "#include <cstdint>";
+    code_ += "#include <cstddef>";
+    code_ += "#include <type_traits>";
+    code_ += "";
+
+    assert(!cur_name_space_);
+
+    // generate forward declarations for all structs/tables, for the type
+    // traits we generate later
+    GenForwardDecls();
+
+    // generate the enums and type traits
+    GenEnums();
+
+    assert(cur_name_space_);
+    SetNameSpace(nullptr);
+
+    // Close the include guard.
+    code_ += "#endif  // " + include_guard;
+    const auto file_path = GeneratedEnumFileName(path_, file_name_);
+    const auto final_code = code_.ToString();
+    return SaveFile(file_path.c_str(), final_code, false);
+  }
+
+  void GenEnumUnionDecl(const EnumDef &enum_def) {
+    if (parser_.opts.generate_object_based_api) {
       // Generate a union type
       code_.SetValue("NAME", enum_def.name);
       code_.SetValue("NONE",
@@ -696,10 +769,20 @@ class CppGenerator : public BaseGenerator {
       code_ += "";
     }
 
-    if (enum_def.is_union) {
-      code_ += UnionVerifySignature(enum_def) + ";";
-      code_ += UnionVectorVerifySignature(enum_def) + ";";
-      code_ += "";
+    code_ += UnionVerifySignature(enum_def) + ";";
+    code_ += UnionVectorVerifySignature(enum_def) + ";";
+    code_ += "";
+  }
+
+  void GenEnumUnionDecls() {
+    // Generate code for all the enum union declarations.
+    for (auto it = parser_.enums_.vec.begin(); it != parser_.enums_.vec.end();
+         ++it) {
+      const auto &enum_def = **it;
+      if (!enum_def.generated && enum_def.is_union) {
+        SetNameSpace(enum_def.defined_namespace);
+        GenEnumUnionDecl(enum_def);
+      }
     }
   }
 
