@@ -730,6 +730,11 @@ FLATBUFFERS_FINAL_CLASS
   }
   /// @endcond
 
+  // @brief check if the builder has been finished
+  bool isFinished() const {
+      return finished;
+  }
+
   /// @brief In order to save space, fields that are set to their default value
   /// don't get serialized into the buffer.
   /// @param[in] bool fd When set to `true`, always serializes default values.
@@ -1487,6 +1492,10 @@ class Verifier FLATBUFFERS_FINAL_CLASS {
   }
 
   // Verify this whole buffer, starting with root type T.
+  template<typename T> bool VerifyBuffer() {
+    return VerifyBuffer<T>(nullptr);
+  }
+
   template<typename T> bool VerifyBuffer(const char *identifier) {
     return VerifyBufferFromStart<T>(identifier, buf_);
   }
