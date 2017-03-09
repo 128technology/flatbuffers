@@ -158,6 +158,93 @@ flatbuffers::unique_ptr_t CreateFlatBufferTest(std::string &buffer) {
   return builder.ReleaseBufferPointer();
 }
 
+flatbuffers::unique_ptr_t MoveFlatBufferTest(std::string &buffer) {
+  std::unique_ptr<flatbuffers::FlatBufferBuilder> builder1(new flatbuffers::FlatBufferBuilder);
+
+  auto vec = Vec3(1, 2, 3, 0, Color_Red, Test(10, 20));
+
+  auto name = builder1->CreateString("MyMonster");
+
+  unsigned char inv_data[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+  auto inventory = builder1->CreateVector(inv_data, 10);
+
+  std::unique_ptr<flatbuffers::FlatBufferBuilder> builder2(new flatbuffers::FlatBufferBuilder(std::move(*builder1)));
+  builder1 = nullptr;
+
+  // Alternatively, create the vector first, and fill in data later:
+  // unsigned char *inv_buf = nullptr;
+  // auto inventory = builder.CreateUninitializedVector<unsigned char>(
+  //                                                              10, &inv_buf);
+  // memcpy(inv_buf, inv_data, 10);
+
+  Test tests[] = { Test(10, 20), Test(30, 40) };
+  auto testv = builder2->CreateVectorOfStructs(tests, 2);
+
+  std::unique_ptr<flatbuffers::FlatBufferBuilder> builder3(new flatbuffers::FlatBufferBuilder);
+  *builder3 = std::move(*builder2);
+  builder2 = nullptr;
+
+  // create monster with very few fields set:
+  // (same functionality as CreateMonster below, but sets fields manually)
+  flatbuffers::Offset<Monster> mlocs[3];
+  auto fred = builder3->CreateString("Fred");
+  auto barney = builder3->CreateString("Barney");
+  auto wilma = builder3->CreateString("Wilma");
+  MonsterBuilder mb1(*builder3);
+  mb1.add_name(fred);
+  mlocs[0] = mb1.Finish();
+  MonsterBuilder mb2(*builder3);
+  mb2.add_name(barney);
+  mb2.add_hp(1000);
+  mlocs[1] = mb2.Finish();
+  MonsterBuilder mb3(*builder3);
+  mb3.add_name(wilma);
+  mlocs[2] = mb3.Finish();
+
+  // Create an array of strings. Also test string pooling, and lambdas.
+  const char *names[] = { "bob", "fred", "bob", "fred" };
+  auto vecofstrings =
+      builder3->CreateVector<flatbuffers::Offset<flatbuffers::String>>(4,
+        [&](size_t i) {
+    return builder3->CreateSharedString(names[i]);
+  });
+
+  flatbuffers::FlatBufferBuilder builder4 = std::move(*builder3);
+  builder3 = nullptr;
+
+  // Creating vectors of strings in one convenient call.
+  std::vector<std::string> names2;
+  names2.push_back("jane");
+  names2.push_back("mary");
+  auto vecofstrings2 = builder4.CreateVectorOfStrings(names2);
+
+  // Create an array of sorted tables, can be used with binary search when read:
+  auto vecoftables = builder4.CreateVectorOfSortedTables(mlocs, 3);
+
+  // shortcut for creating monster with all fields set:
+  auto mloc = CreateMonster(builder4, &vec, 150, 80, name, inventory, Color_Blue,
+                            Any_Monster, mlocs[1].Union(), // Store a union.
+                            testv, vecofstrings, vecoftables, 0, 0, 0, false,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 3.14159f, 3.0f, 0.0f,
+                            vecofstrings2);
+
+  FinishMonsterBuffer(builder4, mloc);
+
+  #ifdef FLATBUFFERS_TEST_VERBOSE
+  // print byte data for debugging:
+  auto p = builder4.GetBufferPointer();
+  for (flatbuffers::uoffset_t i = 0; i < builder4.GetSize(); i++)
+    printf("%d ", p[i]);
+  #endif
+
+  // return the buffer for the caller to use.
+  auto bufferpointer =
+    reinterpret_cast<const char *>(builder4.GetBufferPointer());
+  buffer.assign(bufferpointer, bufferpointer + builder4.GetSize());
+
+  return builder4.ReleaseBufferPointer();
+}
+
 //  example of accessing a buffer loaded in memory:
 void AccessFlatBufferTest(const uint8_t *flatbuf, size_t length,
                           bool pooled = true) {
@@ -1428,6 +1515,11 @@ int main(int /*argc*/, const char * /*argv*/[]) {
   AccessFlatBufferTest(reinterpret_cast<const uint8_t *>(rawbuf.c_str()),
                        rawbuf.length());
   AccessFlatBufferTest(flatbuf.get(), rawbuf.length());
+
+  std::string rawbuf2;
+  auto flatbuf2 = MoveFlatBufferTest(rawbuf2);
+  AccessFlatBufferTest(flatbuf2.get(), rawbuf2.length());
+  TEST_EQ(rawbuf, rawbuf2);
 
   MutateFlatBuffersTest(flatbuf.get(), rawbuf.length());
 

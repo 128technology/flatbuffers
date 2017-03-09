@@ -502,6 +502,31 @@ class vector_downward {
       cur_(buf_ + reserved_),
       allocator_(allocator) {}
 
+  vector_downward(vector_downward &&other)
+    : reserved_(std::move(other.reserved_))
+    , buf_(std::move(other.buf_))
+    , cur_(std::move(other.cur_))
+    , allocator_(other.allocator_)
+  {
+    // prevent other from deallocating
+    other.buf_ = nullptr;
+  }
+
+  vector_downward &operator=(vector_downward &&other)
+  {
+    reserved_ = std::move(other.reserved_);
+
+    if (buf_) {
+      allocator_.deallocate(buf_);
+    }
+    buf_ = std::move(other.buf_);
+    other.buf_ = nullptr;
+
+    cur_ = std::move(other.cur_);
+    const_cast<simple_allocator&>(allocator_) = other.allocator_;
+    return *this;
+  }
+
   ~vector_downward() {
     if (buf_)
       allocator_.deallocate(buf_);
@@ -664,9 +689,10 @@ FLATBUFFERS_FINAL_CLASS
     EndianCheck();
   }
 
-  ~FlatBufferBuilder() {
-    if (string_pool) delete string_pool;
-  }
+  FlatBufferBuilder(FlatBufferBuilder &&) = default;
+  FlatBufferBuilder &operator=(FlatBufferBuilder &&) = default;
+
+  ~FlatBufferBuilder() = default;
 
   /// @brief Reset all the state in this FlatBufferBuilder so it can be reused
   /// to construct another buffer.
@@ -976,7 +1002,7 @@ FLATBUFFERS_FINAL_CLASS
   /// @return Returns the offset in the buffer where the string starts.
   Offset<String> CreateSharedString(const char *str, size_t len) {
     if (!string_pool)
-      string_pool = new StringOffsetMap(StringOffsetCompare(buf_));
+      string_pool.reset(new StringOffsetMap(StringOffsetCompare(buf_)));
     auto size_before_string = buf_.size();
     // Must first serialize the string, since the set is all offsets into
     // buffer.
@@ -1324,7 +1350,7 @@ FLATBUFFERS_FINAL_CLASS
 
   // For use with CreateSharedString. Instantiated on first use only.
   typedef std::set<Offset<String>, StringOffsetCompare> StringOffsetMap;
-  StringOffsetMap *string_pool;
+  std::unique_ptr<StringOffsetMap> string_pool;
 };
 /// @}
 
